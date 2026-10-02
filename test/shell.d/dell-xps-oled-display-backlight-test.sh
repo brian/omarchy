@@ -126,6 +126,18 @@ printf 'root=UUID=abc rw quiet xe.enable_dpcd_backlight=1\n' >"$running_cmdline"
 run_migration || fail "a user's migration after the reboot no-ops"
 [[ ! -s $call_log ]] || fail "a user's migration after the reboot no-ops" "$(cat "$call_log")"
 pass "a user's migration after the reboot neither rebuilds nor asks for another"
+
+# Booted with the parameter typed in at the boot menu, so nothing persistent carries it yet.
+rm -rf "$test_tmp/limine-entry-tool.d" "$marker"
+run_migration || fail "a machine booted with the parameter by hand still gets the drop-in"
+grep -Fxq "$expected_param" "$drop_in" ||
+  fail "a machine booted with the parameter by hand still gets the drop-in"
+grep -Fxq 'limine-mkinitcpio' "$call_log" ||
+  fail "a machine booted with the parameter by hand still rebuilds the boot image" "$(cat "$call_log")"
+[[ -e $marker ]] || fail "a machine booted with the parameter by hand records the rebuild"
+! grep -q 'reboot-required' "$call_log" ||
+  fail "a machine already booted with the parameter is not asked to reboot" "$(cat "$call_log")"
+pass "a machine booted with the parameter by hand still gets the drop-in, without a reboot prompt"
 printf 'root=UUID=abc rw quiet\n' >"$running_cmdline"
 
 rm -rf "$test_tmp/limine-entry-tool.d" "$marker"
