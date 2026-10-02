@@ -97,10 +97,13 @@ run_migration() {
     TEST_XPS_OLED="${1-1}" \
     OMARCHY_DELL_XPS_OLED_BACKLIGHT_CONF="$drop_in" \
     OMARCHY_DELL_XPS_OLED_BACKLIGHT_MARKER="$marker" \
+    OMARCHY_DELL_XPS_OLED_RUNNING_CMDLINE="$running_cmdline" \
     bash -euo pipefail "$migration" >/dev/null
 }
 
 marker="$test_tmp/var/lib/omarchy/migrations/1788886195"
+running_cmdline="$test_tmp/cmdline"
+printf 'root=UUID=abc rw quiet\n' >"$running_cmdline"
 
 run_migration || fail "the migration applies the fix, rebuilds the boot image, and asks for a reboot"
 grep -Fxq "$expected_param" "$drop_in" ||
@@ -112,16 +115,25 @@ grep -Fxq 'state set reboot-required' "$call_log" ||
 [[ -e $marker ]] || fail "the migration records the machine-wide rebuild"
 pass "the migration applies the fix, rebuilds the boot image, and asks for a reboot"
 
-run_migration || fail "a second user's migration no-ops once the machine is repaired"
-[[ ! -s $call_log ]] ||
-  fail "a second user's migration no-ops once the machine is repaired" "$(cat "$call_log")"
-pass "a second user's migration neither rebuilds nor asks for another reboot"
+run_migration || fail "a second user's migration before the reboot asks for one without rebuilding"
+! grep -Fxq 'limine-mkinitcpio' "$call_log" ||
+  fail "a second user's migration before the reboot does not rebuild again" "$(cat "$call_log")"
+grep -Fxq 'state set reboot-required' "$call_log" ||
+  fail "a second user's migration before the reboot asks that user to reboot" "$(cat "$call_log")"
+pass "a second user's migration before the reboot asks for one without rebuilding"
+
+printf 'root=UUID=abc rw quiet xe.enable_dpcd_backlight=1\n' >"$running_cmdline"
+run_migration || fail "a user's migration after the reboot no-ops"
+[[ ! -s $call_log ]] || fail "a user's migration after the reboot no-ops" "$(cat "$call_log")"
+pass "a user's migration after the reboot neither rebuilds nor asks for another"
+printf 'root=UUID=abc rw quiet\n' >"$running_cmdline"
 
 rm -rf "$test_tmp/limine-entry-tool.d" "$marker"
 if run_migration 1 "$test_tmp/failing-rebuild-bin"; then
   fail "a failed rebuild stops the migration"
 fi
 [[ ! -e $marker ]] || fail "a failed rebuild leaves no marker, so the migration retries"
+! grep -q 'reboot-required' "$call_log" || fail "a failed rebuild does not ask for a reboot" "$(cat "$call_log")"
 pass "a failed rebuild leaves the migration pending for a retry"
 
 rm -rf "$test_tmp/limine-entry-tool.d"
