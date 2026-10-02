@@ -54,7 +54,13 @@ printf 'limine-mkinitcpio\n' >>"$CALL_LOG"
 exit 1
 SH
 
-chmod +x "$test_tmp/bin"/* "$test_tmp/rebuild-bin"/* "$test_tmp/no-limine-bin"/*
+mkdir -p "$test_tmp/failing-rebuild-bin"
+cat >"$test_tmp/failing-rebuild-bin/limine-mkinitcpio" <<'SH'
+#!/bin/bash
+exit 1
+SH
+
+chmod +x "$test_tmp/bin"/* "$test_tmp/rebuild-bin"/* "$test_tmp/no-limine-bin"/* "$test_tmp/failing-rebuild-bin"/*
 
 drop_in="$test_tmp/limine-entry-tool.d/dell-xps-oled-display-backlight.conf"
 call_log="$test_tmp/calls.log"
@@ -90,8 +96,11 @@ run_migration() {
     OMARCHY_PATH="$ROOT" \
     TEST_XPS_OLED="${1-1}" \
     OMARCHY_DELL_XPS_OLED_BACKLIGHT_CONF="$drop_in" \
+    OMARCHY_DELL_XPS_OLED_BACKLIGHT_MARKER="$marker" \
     bash -euo pipefail "$migration" >/dev/null
 }
+
+marker="$test_tmp/var/lib/omarchy/migrations/1788886195"
 
 run_migration || fail "the migration applies the fix, rebuilds the boot image, and asks for a reboot"
 grep -Fxq "$expected_param" "$drop_in" ||
@@ -100,7 +109,20 @@ grep -Fxq 'limine-mkinitcpio' "$call_log" ||
   fail "the migration rebuilds the boot image" "$(cat "$call_log")"
 grep -Fxq 'state set reboot-required' "$call_log" ||
   fail "the migration asks for a reboot" "$(cat "$call_log")"
+[[ -e $marker ]] || fail "the migration records the machine-wide rebuild"
 pass "the migration applies the fix, rebuilds the boot image, and asks for a reboot"
+
+run_migration || fail "a second user's migration no-ops once the machine is repaired"
+[[ ! -s $call_log ]] ||
+  fail "a second user's migration no-ops once the machine is repaired" "$(cat "$call_log")"
+pass "a second user's migration neither rebuilds nor asks for another reboot"
+
+rm -rf "$test_tmp/limine-entry-tool.d" "$marker"
+if run_migration 1 "$test_tmp/failing-rebuild-bin"; then
+  fail "a failed rebuild stops the migration"
+fi
+[[ ! -e $marker ]] || fail "a failed rebuild leaves no marker, so the migration retries"
+pass "a failed rebuild leaves the migration pending for a retry"
 
 rm -rf "$test_tmp/limine-entry-tool.d"
 run_migration 0 || fail "the migration no-ops on other hardware"
